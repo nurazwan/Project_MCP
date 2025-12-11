@@ -26,6 +26,8 @@ dependencies = [
     "fastmcp>=2.0.0",
     "playwright>=1.49.0",
     "pydantic>=2.0.0",
+    "uvicorn>=0.30.0",
+    "starlette>=0.38.0",
 ]
 
 [project.optional-dependencies]
@@ -36,6 +38,7 @@ dev = [
 
 [project.scripts]
 playwright-mcp = "playwright_mcp.server:main"
+playwright-mcp-sse = "playwright_mcp.server:main_sse"
 
 [tool.setuptools.packages.find]
 where = ["src"]

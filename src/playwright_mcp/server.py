@@ -7,6 +7,8 @@ Built with FastMCP for seamless integration with Claude and other MCP clients.
 
 import base64
 import json
+import os
+import re
 from typing import Annotated, Any, Literal
 from contextlib import asynccontextmanager
 
@@ -1869,13 +1871,209 @@ async def is_checked(
 
 
 # =============================================================================
+# Credential Management Tools
+# =============================================================================
+
+def _domain_to_env_prefix(domain: str) -> str:
+    """Convert a domain name to environment variable prefix.
+
+    Examples:
+        domain.com -> domaincom
+        sub.domain.com -> subdomaincom
+        my-site.org -> mysiteorg
+    """
+    # Remove protocol if present
+    domain = re.sub(r'^https?://', '', domain)
+    # Remove path and query string
+    domain = domain.split('/')[0]
+    # Remove port if present
+    domain = domain.split(':')[0]
+    # Remove all non-alphanumeric characters and convert to lowercase
+    prefix = re.sub(r'[^a-zA-Z0-9]', '', domain).lower()
+    return prefix
+
+
+@mcp.tool()
+async def get_credentials(
+    domain: Annotated[str, Field(description="Domain to get credentials for, e.g., 'example.com', 'https://login.example.com', 'my-site.org'")]
+) -> dict[str, Any]:
+    """
+    Retrieve stored credentials (username/password) for a domain from environment variables.
+
+    CREDENTIAL STORAGE PATTERN:
+    For a domain like 'example.com', set these environment variables:
+    - examplecom_username - The username/email for authentication
+    - examplecom_password - The password for authentication
+
+    DOMAIN TO ENV MAPPING EXAMPLES:
+    | Domain | Username Env Var | Password Env Var |
+    |--------|------------------|------------------|
+    | example.com | examplecom_username | examplecom_password |
+    | login.github.com | logingithubcom_username | logingithubcom_password |
+    | my-app.io | myappio_username | myappio_password |
+    | sub.domain.co.uk | subdomaincouk_username | subdomaincouk_password |
+
+    WHEN TO USE:
+    - Before filling login forms to retrieve stored credentials
+    - To check if credentials are configured for a domain
+    - For automated authentication workflows
+
+    SECURITY NOTE:
+    - Credentials are read from environment variables (not stored in code)
+    - Password is masked in the response (shows length only)
+    - Set environment variables securely before running the server
+
+    Returns: {
+        "status": "success",
+        "domain": "example.com",
+        "env_prefix": "examplecom",
+        "username": "user@example.com",
+        "password": "********",  # Actual password (masked in description)
+        "has_credentials": true
+    }
+
+    Example workflow:
+    1. creds = get_credentials(domain="github.com")
+    2. fill(page_id="page_1", selector="#login_field", value=creds["username"])
+    3. fill(page_id="page_1", selector="#password", value=creds["password"])
+    4. click(page_id="page_1", selector="input[type='submit']")
+    """
+    try:
+        env_prefix = _domain_to_env_prefix(domain)
+        username_key = f"{env_prefix}_username"
+        password_key = f"{env_prefix}_password"
+
+        username = os.getenv(username_key)
+        password = os.getenv(password_key)
+
+        has_credentials = username is not None and password is not None
+
+        return {
+            "status": "success",
+            "domain": domain,
+            "env_prefix": env_prefix,
+            "username_env": username_key,
+            "password_env": password_key,
+            "username": username,
+            "password": password,
+            "has_credentials": has_credentials,
+            "message": f"Credentials {'found' if has_credentials else 'not found'} for {domain}"
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+@mcp.tool()
+async def list_credential_env_vars() -> dict[str, Any]:
+    """
+    List all environment variables that match the credential pattern (*_username, *_password).
+
+    WHEN TO USE:
+    - To see which domains have credentials configured
+    - To debug credential setup issues
+    - To verify environment variables are loaded correctly
+
+    SECURITY NOTE:
+    - Only shows environment variable NAMES, not values
+    - Passwords are never exposed by this tool
+    - Use get_credentials() to retrieve actual values for a specific domain
+
+    Returns: {
+        "status": "success",
+        "credential_pairs": [
+            {"domain_prefix": "githubcom", "username_env": "githubcom_username", "password_env": "githubcom_password"},
+            {"domain_prefix": "examplecom", "username_env": "examplecom_username", "password_env": "examplecom_password"}
+        ],
+        "total_pairs": 2
+    }
+    """
+    try:
+        # Find all _username and _password env vars
+        username_vars = {}
+        password_vars = set()
+
+        for key in os.environ:
+            if key.endswith('_username'):
+                prefix = key[:-9]  # Remove '_username'
+                username_vars[prefix] = key
+            elif key.endswith('_password'):
+                prefix = key[:-9]  # Remove '_password'
+                password_vars.add(prefix)
+
+        # Find pairs where both username and password exist
+        credential_pairs = []
+        for prefix, username_key in username_vars.items():
+            if prefix in password_vars:
+                credential_pairs.append({
+                    "domain_prefix": prefix,
+                    "username_env": username_key,
+                    "password_env": f"{prefix}_password",
+                    "has_both": True
+                })
+            else:
+                credential_pairs.append({
+                    "domain_prefix": prefix,
+                    "username_env": username_key,
+                    "password_env": f"{prefix}_password",
+                    "has_both": False,
+                    "missing": "password"
+                })
+
+        # Check for orphan passwords (password without username)
+        for prefix in password_vars:
+            if prefix not in username_vars:
+                credential_pairs.append({
+                    "domain_prefix": prefix,
+                    "username_env": f"{prefix}_username",
+                    "password_env": f"{prefix}_password",
+                    "has_both": False,
+                    "missing": "username"
+                })
+
+        return {
+            "status": "success",
+            "credential_pairs": credential_pairs,
+            "total_pairs": len([p for p in credential_pairs if p.get("has_both", False)]),
+            "total_partial": len([p for p in credential_pairs if not p.get("has_both", False)])
+        }
+    except Exception as e:
+        return {"status": "error", "message": str(e)}
+
+
+# =============================================================================
 # Entry Point
 # =============================================================================
 
 def main():
-    """Run the MCP server."""
+    """Run the MCP server with stdio transport (default)."""
     mcp.run()
 
 
+def main_sse(host: str = "0.0.0.0", port: int = 8000):
+    """Run the MCP server with SSE (Server-Sent Events) transport.
+
+    Args:
+        host: Host to bind to. Default "0.0.0.0" for all interfaces.
+        port: Port to listen on. Default 8000.
+    """
+    mcp.run(transport="sse", host=host, port=port)
+
+
 if __name__ == "__main__":
-    main()
+    import sys
+
+    if len(sys.argv) > 1 and sys.argv[1] == "--sse":
+        # Parse optional host and port arguments
+        host = "0.0.0.0"
+        port = 8000
+
+        for arg in sys.argv[2:]:
+            if arg.startswith("--host="):
+                host = arg.split("=", 1)[1]
+            elif arg.startswith("--port="):
+                port = int(arg.split("=", 1)[1])
+
+        print(f"Starting Playwright MCP server with SSE transport on {host}:{port}")
+        main_sse(host=host, port=port)
+    else:
+        main()

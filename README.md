@@ -48,6 +48,10 @@ python -m playwright install
 
 ### Running the Server
 
+The server supports two transport modes: **stdio** (default) and **SSE** (Server-Sent Events).
+
+#### Stdio Transport (Default)
+
 ```bash
 # Run directly
 python -m playwright_mcp.server
@@ -58,6 +62,28 @@ playwright-mcp
 # Or with FastMCP CLI
 fastmcp run src/playwright_mcp/server.py
 ```
+
+#### SSE Transport (HTTP Server)
+
+SSE transport runs the MCP server as an HTTP server, useful for web-based clients or remote connections.
+
+```bash
+# Run with SSE on default host (0.0.0.0) and port (8000)
+python -m playwright_mcp.server --sse
+
+# Run with custom port
+python -m playwright_mcp.server --sse --port=3000
+
+# Run with custom host and port
+python -m playwright_mcp.server --sse --host=127.0.0.1 --port=8080
+
+# Or use the dedicated SSE command (default: 0.0.0.0:8000)
+playwright-mcp-sse
+```
+
+**SSE Endpoints:**
+- `GET /sse` - SSE event stream
+- `POST /messages` - Send messages to the server
 
 ### Claude Desktop Configuration
 
@@ -151,6 +177,13 @@ Or using uv:
 | `wait_for_load_state` | Wait for page load state |
 | `wait_for_url` | Wait for URL pattern |
 
+### Credential Management
+
+| Tool | Description |
+|------|-------------|
+| `get_credentials` | Get username/password for a domain from env vars |
+| `list_credential_env_vars` | List all configured credential env vars |
+
 ### Advanced
 
 | Tool | Description |
@@ -195,6 +228,71 @@ Or using uv:
 3. query_selector_all(page_id="page_1", selector=".titleline > a")
 4. get_text(page_id="page_1", selector=".titleline")
 ```
+
+### Authentication with Stored Credentials
+
+```
+1. get_credentials(domain="github.com")  # Returns username & password from env vars
+2. browser_launch()
+3. navigate(url="https://github.com/login")
+4. fill(page_id="page_1", selector="#login_field", value=<username from step 1>)
+5. fill(page_id="page_1", selector="#password", value=<password from step 1>)
+6. click(page_id="page_1", selector="input[type='submit']")
+```
+
+## Credential Management
+
+Store credentials securely in environment variables using a domain-based naming pattern.
+
+### Environment Variable Pattern
+
+For a domain, remove all non-alphanumeric characters and append `_username` or `_password`:
+
+| Domain | Username Env Var | Password Env Var |
+|--------|------------------|------------------|
+| `github.com` | `githubcom_username` | `githubcom_password` |
+| `example.com` | `examplecom_username` | `examplecom_password` |
+| `my-app.io` | `myappio_username` | `myappio_password` |
+| `login.site.org` | `loginsiteorg_username` | `loginsiteorg_password` |
+| `sub.domain.co.uk` | `subdomaincouk_username` | `subdomaincouk_password` |
+
+### Setting Up Credentials
+
+**Option 1: Export in shell**
+```bash
+export githubcom_username="your-username"
+export githubcom_password="your-password"
+```
+
+**Option 2: Use a .env file** (with a tool like `dotenv`)
+```bash
+# .env file
+githubcom_username=your-username
+githubcom_password=your-password
+examplecom_username=user@example.com
+examplecom_password=secret123
+```
+
+**Option 3: Set in Claude Desktop config**
+```json
+{
+  "mcpServers": {
+    "playwright": {
+      "command": "python",
+      "args": ["-m", "playwright_mcp.server"],
+      "env": {
+        "githubcom_username": "your-username",
+        "githubcom_password": "your-password"
+      }
+    }
+  }
+}
+```
+
+### Credential Tools
+
+- `get_credentials(domain="github.com")` - Retrieves username and password for the domain
+- `list_credential_env_vars()` - Lists all configured credential environment variables (names only, not values)
 
 ## Selector Types
 
